@@ -2,6 +2,7 @@ import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 import rateLimit from "express-rate-limit";
+import mongoose from "mongoose"; // Handle connection status check ke liye
 import connectDB from "./config/db";
 import authRoutes from "./routes/authRoutes";
 import leadRoutes from "./routes/leadRoutes";
@@ -35,28 +36,31 @@ const apiLimiter = rateLimit({
 // Middleware Setup
 // ========================
 
-// Allow multiple origins: localhost for dev, production URL for prod
-const allowedOrigins = [
-  "http://localhost:3000",
-  "http://localhost:5173",
-  process.env.CLIENT_URL,
-].filter(Boolean) as string[];
-
 app.use(
   cors({
-    origin: (origin, callback) => {
-      // Allow requests with no origin (e.g. mobile apps, curl)
-      if (!origin) return callback(null, true);
-      if (allowedOrigins.includes(origin)) {
-        return callback(null, true);
-      }
-      return callback(new Error(`CORS policy: Origin ${origin} not allowed`));
-    },
+    origin: '*', // Vercel and production flexible cross-origin sharing
     credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization']
   })
 );
 
+// Preflight (OPTIONS) requests handler
+app.options('*', cors());
+
 app.use(express.json()); // Parse JSON request bodies
+
+// Serverless DB Connection Ensuring Middleware
+app.use(async (_req, _res, next) => {
+  if (mongoose.connection.readyState !== 1) {
+    try {
+      await connectDB();
+    } catch (error) {
+      console.error("Database connection failed inside serverless invocation:", error);
+    }
+  }
+  next();
+});
 
 // ========================
 // Routes
@@ -75,9 +79,8 @@ app.use(notFound);
 app.use(errorHandler);
 
 // ========================
-// Start Server (only in non-serverless environments)
+// Start Server / Cold Starts
 // ========================
-// On Vercel, the app is exported as a handler — no need to call app.listen()
 if (process.env.VERCEL !== "1") {
   connectDB().then(() => {
     app.listen(PORT, () => {
@@ -85,7 +88,7 @@ if (process.env.VERCEL !== "1") {
     });
   });
 } else {
-  // Vercel: connect DB on cold start, then export handler
+  // Cold start connection setup for Serverless architecture
   connectDB().catch(console.error);
 }
 
